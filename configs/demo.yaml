@@ -1,0 +1,17 @@
+# Synthetic Germany-wide demo configuration (egms demo).
+study_area: Germany          # national bounding box; see egms_tools/germany.py
+field:
+  seed: 0
+  n_background: 6000         # sparse national screening points
+  points_per_asset: 20       # dense points on each monitored footprint (EGMS is dense on targets)
+  n_dates: 73
+  t0: 2018.0
+  t1: 2024.0
+risk:                        # illustrative defaults — calibrate with a geotech engineer
+  v_monitor: 2.0
+  v_investigate: 6.0
+  v_act: 10.0
+  diff_investigate: 3.0
+  diff_act: 6.0
+  accel_flag: 0.8
+  search_radius_m: 55.0
