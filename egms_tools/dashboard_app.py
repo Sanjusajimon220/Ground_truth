@@ -53,7 +53,8 @@ def _city_stats(lon, lat, vert, half_lat=0.07):
     return out
 
 
-def build_app(out_path, seed=0, heat_override=None, heat_timelapse=None):
+def build_app(out_path, seed=0, heat_override=None, heat_timelapse=None,
+              deformation_override=None):
     """Build the single-file app.
 
     heat_override: optional dict {"png": data-uri, "bounds": [[s,w],[n,e]]}
@@ -129,8 +130,6 @@ def build_app(out_path, seed=0, heat_override=None, heat_timelapse=None):
         dates.append(round(float(field.dates[e])))
     timelapse = {"frames": frames, "dates": dates,
                  "bounds": [[nat_bbox[0], nat_bbox[1]], [nat_bbox[2], nat_bbox[3]]]}
-    if heat_timelapse:                                 # REAL yearly Landsat LST
-        timelapse = heat_timelapse
 
     cov = coverage_report(results)
     queue = inspection_rows(results)
@@ -148,11 +147,38 @@ def build_app(out_path, seed=0, heat_override=None, heat_timelapse=None):
         heat["surface"]["png"] = heat_override["png"]
         heat["surface"]["bounds"] = heat_override["bounds"]
         heat["surface"]["real"] = True
+        # optional second view: anomaly (°C vs the 10-yr mean)
+        if "png_anomaly" in heat_override:
+            heat["surface"]["png_anomaly"] = heat_override["png_anomaly"]
+        if "baseline" in heat_override:
+            heat["surface"]["baseline"] = heat_override["baseline"]
+        if "vmax" in heat_override:
+            heat["surface"]["vmax"] = heat_override["vmax"]
+        if "vmin" in heat_override:
+            heat["surface"]["vmin"] = heat_override["vmin"]
+        if "grid" in heat_override:                     # real numeric grid -> click reads real °C
+            heat["surface"]["grid"] = heat_override["grid"]
         if "cities" in heat_override:
             heat["cities"] = heat_override["cities"]
+    if deformation_override:                            # REAL EGMS L3 ground motion
+        d = deformation_override
+        nat_surface["png"] = d["png"]
+        nat_surface["png_sig"] = d["png"]
+        nat_surface["png_sub"] = d["png"]
+        nat_surface["png_up"] = d["png"]
+        nat_surface["bounds"] = d["bounds"]
+        nat_surface["grid"] = d["grid"]
+        nat_surface["real"] = True
+        if "stats" in d:
+            nat_surface["stats"] = d["stats"]
+        if "n_points" in d:
+            nat_surface["n_points"] = d["n_points"]
+        if "timelapse" in d:                           # real yearly displacement frames
+            timelapse = d["timelapse"]
     app = {"risk": risk, "staufen": staufen,
            "nat_surface": nat_surface, "nat_surface_ew": nat_surface_ew,
            "st_surface": st_surface, "timelapse": timelapse,
+           "heat_timelapse": heat_timelapse,
            "hotspots": hotspots, "cities": cities, "landuse": landuse, "heat": heat,
            "coverage": cov, "queue": queue,
            "stats": {"points": dens["total"], "buildings": cov["assets"],
@@ -242,8 +268,6 @@ TEMPLATE = r"""<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8">
  <nav id="nav">
   <button data-v="overview" class="active">Overview</button>
   <button data-v="risk">Risk surface</button>
-  <button data-v="cities">City planning</button>
-  <button data-v="corridor">Corridor / path</button>
   <button data-v="landuse">Land-use change</button>
   <button data-v="heat">Urban heat</button>
   <button data-v="staufen">Staufen (building)</button>
@@ -251,6 +275,12 @@ TEMPLATE = r"""<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8">
   <button data-v="coverage">Coverage</button>
   <button data-v="queue">Inspection queue</button>
   <button data-v="concepts">Concepts</button>
+ </nav>
+ <nav id="subnav" style="display:none;align-items:center;gap:4px;border-top:1px solid var(--line);padding:6px 8px">
+  <span style="font-family:var(--m);font-size:10px;color:var(--muted);padding:0 8px">RISK SURFACE ›</span>
+  <button data-v="risk">Surface</button>
+  <button data-v="cities">City planning</button>
+  <button data-v="corridor">Corridor / path</button>
  </nav>
 </header>
 <main>
@@ -306,7 +336,8 @@ TEMPLATE = r"""<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8">
  </section>
 
  <section class="view" id="v-timelapse">
-   <div class="bar"><div><h2>Ground motion over time</h2><div class="sub">cumulative displacement surface · red = down, blue = up</div></div></div>
+   <div class="bar"><div><h2 id="tl-title">Ground motion over time</h2><div class="sub" id="tl-sub">cumulative displacement surface · red = down, blue = up</div></div>
+     <div class="chips"><button class="mt" id="tl-mode-motion" data-tl="motion">Ground motion</button><button class="mt" id="tl-mode-heat" data-tl="heat">Urban heat</button></div></div>
    <div class="map" id="map-timelapse"></div>
    <div class="ctrl"><button class="play" id="tl-play">▶ Play</button>
      <input type="range" id="tl-slider" min="0" value="0"/><div class="date" id="tl-date"></div></div>
@@ -329,8 +360,8 @@ function s2Layer(){return L.tileLayer('https://tiles.maps.eox.at/wmts/1.0.0/s2cl
 function esriLayer(){return L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{x}/{y}',{maxZoom:19,attribution:'Imagery © Esri, Maxar, Earthstar Geographics'});}
 function terrainLayer(){return L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Elevation/World_Hillshade/MapServer/tile/{z}/{x}/{y}',{maxZoom:16,attribution:'Elevation © Esri, USGS, NASA'});}
 function dim(m){m.getPane('tilePane').style.filter='grayscale(0.55) brightness(0.55) contrast(1.0)';}
-function addBase(m){const osm=osmLayer().addTo(m),s2=s2Layer(),esri=esriLayer(),terr=terrainLayer();
- L.control.layers({'Map (OpenStreetMap)':osm,'Sentinel-2 (10 m optical)':s2,'Satellite hi-res (Esri)':esri,'Terrain / elevation':terr},null,{position:'topright',collapsed:false}).addTo(m);
+function addBase(m,overlays){const osm=osmLayer().addTo(m),s2=s2Layer(),esri=esriLayer(),terr=terrainLayer();
+ L.control.layers({'Map (OpenStreetMap)':osm,'Sentinel-2 (10 m optical)':s2,'Satellite hi-res (Esri)':esri,'Terrain / elevation':terr},overlays||null,{position:'topright',collapsed:false}).addTo(m);
  m.on('baselayerchange',e=>{m.getPane('tilePane').style.filter=(e.name.indexOf('Map')>=0)?'grayscale(0.55) brightness(0.55) contrast(1.0)':(e.name.indexOf('Terrain')>=0)?'brightness(0.85) contrast(1.1)':'brightness(0.72) contrast(1.05)';});
  dim(m);}
 function bigLegend(mode){const c=L.control({position:'bottomleft'});c.onAdd=function(){const d=L.DomUtil.create('div','biglegend');
@@ -366,8 +397,9 @@ function componentToggle(m,onChange){const c=L.control({position:'topright'});c.
 
 const maps={};
 function riskNationalMap(id){
- const m=L.map(id,{preferCanvas:true});addBase(m);
- const ov=L.imageOverlay(APP.nat_surface.png,APP.nat_surface.bounds,{interactive:false}).addTo(m);
+ const m=L.map(id,{preferCanvas:true});
+ const ov=L.imageOverlay(APP.nat_surface.png,APP.nat_surface.bounds,{interactive:false});
+ addBase(m,{'Ground-motion surface':ov});ov.addTo(m);
  m._grid=APP.nat_surface.grid;m._mode='vert';m._legend=bigLegend('vert').addTo(m);
  addHotspots(m,APP.hotspots);m.fitBounds(APP.nat_surface.bounds);addSearch(m);addReadout(m);
  const S=APP.nat_surface,opts={
@@ -444,16 +476,35 @@ function corridorMap(id){
  const clr=document.getElementById('corridor-clear');if(clr)clr.onclick=()=>{pts=[];layer.clearLayers();profile();};
  const und=document.getElementById('corridor-undo');if(und)und.onclick=()=>{pts.pop();redraw();};
  profile();return m;}
-function timelapseMap(id,D){
+function timelapseMap(id){
  const m=L.map(id);addBase(m);
- const ov=L.imageOverlay(D.frames[0],D.bounds,{opacity:1}).addTo(m);m.fitBounds(D.bounds);
- const sl=document.getElementById('tl-slider'),de=document.getElementById('tl-date');sl.max=D.frames.length-1;
- function render(e){ov.setUrl(D.frames[e]);de.textContent=D.dates[e];}render(0);
+ const motion={data:APP.timelapse,kind:'motion'};
+ const heat=APP.heat_timelapse?{data:APP.heat_timelapse,kind:'heat'}:null;
+ let cur=motion;
+ const ov=L.imageOverlay(cur.data.frames[0],cur.data.bounds,{opacity:0.9}).addTo(m);
+ m.fitBounds(cur.data.bounds);
+ const sl=document.getElementById('tl-slider'),de=document.getElementById('tl-date'),btn=document.getElementById('tl-play');
+ let leg=null;
+ function setLegend(){if(leg)m.removeControl(leg);
+  if(cur.kind==='heat'){leg=L.control({position:'bottomleft'});leg.onAdd=function(){const d=L.DomUtil.create('div','biglegend');
+    d.innerHTML='<div class="ttl">land-surface temperature</div><div class="gbar" style="background:linear-gradient(90deg,#3a73d8,#4e9fbd,#d9cc59,#e68d38,#dc522e,#9e1a1f)"></div><div class="tk"><span>cool</span><span></span><span>hot</span></div>';return d;};}
+  else{leg=bigLegend('vert');}
+  leg.addTo(m);}
+ function render(e){ov.setUrl(cur.data.frames[e]);de.textContent=cur.data.dates[e];}
+ function load(sel){cur=sel;ov.setUrl(cur.data.frames[0]);ov.setBounds(cur.data.bounds);m.fitBounds(cur.data.bounds);
+  sl.max=cur.data.frames.length-1;sl.value=0;render(0);setLegend();
+  document.getElementById('tl-title').textContent=cur.kind==='heat'?'Urban heat over time':'Ground motion over time';
+  document.getElementById('tl-sub').textContent=cur.kind==='heat'?'yearly land-surface temperature · real Landsat':'cumulative displacement surface · red = down, blue = up';
+  document.querySelectorAll('#tl-mode-motion,#tl-mode-heat').forEach(b=>{const on=b.dataset.tl===cur.kind;b.style.background=on?'#e0a64e':'transparent';b.style.color=on?'#170f02':'#ededE6';});}
  sl.oninput=()=>render(+sl.value);
- let playing=false,timer=null;const btn=document.getElementById('tl-play');
+ let playing=false,timer=null;
  btn.onclick=()=>{playing=!playing;btn.textContent=playing?'❚❚ Pause':'▶ Play';
-  if(playing)timer=setInterval(()=>{let v=(+sl.value+1)%D.frames.length;sl.value=v;render(v);},700);else clearInterval(timer);};
- bigLegend().addTo(m);return m;}
+  if(playing)timer=setInterval(()=>{let v=(+sl.value+1)%cur.data.frames.length;sl.value=v;render(v);},700);else clearInterval(timer);};
+ const mb=document.getElementById('tl-mode-motion'),hb=document.getElementById('tl-mode-heat');
+ [mb,hb].forEach(b=>{b.style.cssText='font-family:var(--m);font-size:11px;margin:0 0 0 6px;padding:4px 10px;border-radius:6px;border:1px solid #252b2c;cursor:pointer;background:transparent;color:#ededE6';});
+ mb.onclick=()=>load(motion);
+ if(heat)hb.onclick=()=>load(heat);else{hb.style.opacity='0.4';hb.title='no heat time-lapse loaded';}
+ load(motion);return m;}
 function buildCityPanel(){const el=document.getElementById('city-panel');const cs=APP.cities;
  let h='<div style="font-family:var(--m);font-size:11px;color:#878e8a;margin-bottom:8px">Cities ranked by worst local subsidence. Click to zoom in.</div><div id="city-detail"></div>';
  h+=cs.map((c,i)=>`<button class="cityrow" data-i="${i}" style="display:block;width:100%;text-align:left;background:${c.max_sub<-6?'#d8694e16':'transparent'};border:1px solid #252b2c;border-radius:8px;padding:8px 10px;margin-bottom:6px;cursor:pointer;color:#ededE6">
@@ -556,21 +607,50 @@ function buildLandusePanel(){const el=document.getElementById('landuse-panel');c
  h+='</table>';el.innerHTML=h;
  el.querySelectorAll('.lurow').forEach(tr=>tr.onclick=()=>flyParcel(tr.dataset.id,+tr.dataset.lat,+tr.dataset.lon));}
 
-function heatLegend(m){const c=L.control({position:'bottomleft'});c.onAdd=function(){const d=L.DomUtil.create('div','biglegend');
- d.innerHTML='<div class="ttl">land-surface temperature (vs rural)</div>'+
-  '<div class="gbar" style="background:linear-gradient(90deg,#3a73d8,#4e9fbd,#d9cc59,#e68d38,#dc522e,#9e1a1f)"></div>'+
-  '<div class="tk"><span>−2</span><span>+4</span><span>+12 °C</span></div>'+
-  '<div class="tk" style="margin-top:5px;color:#9aa6a0">mild &lt;3 · hot 3–6 · severe heat island 6+ °C</div>';
+function heatLegend(m,mode){const c=L.control({position:'bottomleft'});c.onAdd=function(){const d=L.DomUtil.create('div','biglegend');
+ const real=APP.heat.surface.real, anom=(mode==='anomaly');
+ if(real&&!anom){const vmax=APP.heat.surface.vmax||45;
+  d.innerHTML='<div class="ttl">land-surface temperature (real Landsat)</div>'+
+   '<div class="gbar" style="background:linear-gradient(90deg,#3a73d8,#4e9fbd,#d9cc59,#e68d38,#dc522e,#9e1a1f)"></div>'+
+   '<div class="tk"><span>10</span><span>27</span><span>'+vmax+' °C</span></div>'+
+   '<div class="tk" style="margin-top:5px;color:#9aa6a0">absolute surface temperature · '+(APP.heat.surface.baseline||27)+' °C = 10-yr mean</div>';
+ } else if(real&&anom){
+  d.innerHTML='<div class="ttl">heat-island anomaly (vs 10-yr mean)</div>'+
+   '<div class="gbar" style="background:linear-gradient(90deg,#3a73d8,#4e9fbd,#eee,#e68d38,#dc522e,#9e1a1f)"></div>'+
+   '<div class="tk"><span>−12</span><span>0</span><span>+12 °C</span></div>'+
+   '<div class="tk" style="margin-top:5px;color:#9aa6a0">blue = cooler than mean · red = hotter (heat island)</div>';
+ } else {
+  d.innerHTML='<div class="ttl">land-surface temperature (vs rural)</div>'+
+   '<div class="gbar" style="background:linear-gradient(90deg,#3a73d8,#4e9fbd,#d9cc59,#e68d38,#dc522e,#9e1a1f)"></div>'+
+   '<div class="tk"><span>−2</span><span>+4</span><span>+12 °C</span></div>'+
+   '<div class="tk" style="margin-top:5px;color:#9aa6a0">mild &lt;3 · hot 3–6 · severe heat island 6+ °C</div>';
+ }
+ L.DomEvent.disableClickPropagation(d);return d;};return c;}
+function heatToggle(m,onChange){const c=L.control({position:'topright'});c.onAdd=function(){const d=L.DomUtil.create('div','biglegend');d.style.minWidth='0';d.style.marginTop='6px';
+ d.innerHTML='<div class="ttl">heat view</div><button class="mt" data-v="abs">Absolute °C</button><button class="mt" data-v="anomaly">vs mean</button>';
+ d.querySelectorAll('.mt').forEach(b=>{b.style.cssText='font-family:var(--m);font-size:11px;margin:2px 3px 0 0;padding:4px 8px;border-radius:6px;border:1px solid #252b2c;cursor:pointer;background:transparent;color:#ededE6';});
+ function act(v){d.querySelectorAll('.mt').forEach(b=>{const on=b.dataset.v===v;b.style.background=on?'#e0a64e':'transparent';b.style.color=on?'#170f02':'#ededE6';});}
+ act('abs');d.querySelectorAll('.mt').forEach(b=>b.addEventListener('click',()=>{onChange(b.dataset.v);act(b.dataset.v);}));
  L.DomEvent.disableClickPropagation(d);return d;};return c;}
 function heatReadout(m){m.on('click',e=>{const g=m._grid;if(!g)return;const v=sampleGrid(g,e.latlng.lat,e.latlng.lng);
- let html;if(v===undefined||v===null){html='<div class="pop"><b>Here</b><br><span style="color:#878e8a">outside coverage</span></div>';}
+ const real=APP.heat.surface.real, base=APP.heat.surface.baseline||0, anom=(m._heatmode==='anomaly');
+ let html;if(v===undefined||v===null||Number.isNaN(v)){html='<div class="pop"><b>Here</b><br><span style="color:#878e8a">no data at this spot</span></div>';}
+ else if(real&&anom){const d=v-base,col=d>6?'#9e1a1f':d>2?'#dc522e':d>-2?'#888':'#3a73d8',cat=d>6?'Severe heat island':d>2?'Hotter than average':d>-2?'Around the mean':'Cooler than average';
+  html=`<div class="pop"><b>Heat-island anomaly</b><br><span style="font-size:19px;color:${col};font-family:var(--d)">${d>0?'+':''}${d.toFixed(1)} °C</span> vs ${base} °C mean<br><b style="color:${col}">${cat}</b></div>`;}
+ else if(real){const col=v>35?'#9e1a1f':v>30?'#dc522e':v>25?'#e68d38':v>18?'#d9cc59':'#3a86c8';
+  html=`<div class="pop"><b>Land-surface temperature</b><br><span style="font-size:19px;color:${col};font-family:var(--d)">${v.toFixed(1)} °C</span><br><span style="color:#878e8a;font-size:11px">real Landsat · 10-yr summer median</span></div>`;}
  else{const col=v>6?'#d8694e':v>3?'#e68d38':v>1?'#cdb24a':'#3a86c8',cat=v>6?'Severe heat island':v>3?'Hot':v>1?'Mild':'Near baseline';
   html=`<div class="pop"><b>Land-surface temperature</b><br><span style="font-size:19px;color:${col};font-family:var(--d)">${v>0?'+':''}${v.toFixed(1)} °C</span> vs rural<br><b style="color:${col}">${cat}</b></div>`;}
  L.popup({maxWidth:260}).setLatLng(e.latlng).setContent(html).openOn(m);});}
-function heatMap(id){const m=L.map(id,{preferCanvas:true});addBase(m);
- L.imageOverlay(APP.heat.surface.png,APP.heat.surface.bounds,{interactive:false}).addTo(m);
- m._grid=APP.heat.surface.grid;heatLegend(m).addTo(m);addSearch(m);heatReadout(m);
- m.fitBounds(APP.heat.surface.bounds);return m;}
+function heatMap(id){const m=L.map(id,{preferCanvas:true});
+ const ov=L.imageOverlay(APP.heat.surface.png,APP.heat.surface.bounds,{interactive:false});
+ addBase(m,{'Heat surface':ov});ov.addTo(m);
+ m._grid=APP.heat.surface.grid;m._heatmode='abs';m._legend=heatLegend(m,'abs').addTo(m);addSearch(m);heatReadout(m);
+ m.fitBounds(APP.heat.surface.bounds);
+ if(APP.heat.surface.real&&APP.heat.surface.png_anomaly){
+  heatToggle(m,v=>{m._heatmode=v;ov.setUrl(v==='anomaly'?APP.heat.surface.png_anomaly:APP.heat.surface.png);
+   m.removeControl(m._legend);m._legend=heatLegend(m,v==='anomaly'?'anomaly':'abs').addTo(m);}).addTo(m);}
+ return m;}
 function buildHeatPanel(){const el=document.getElementById('heat-panel');const cs=APP.heat.cities;
  let h='<div style="font-family:var(--m);font-size:11px;color:#878e8a;margin-bottom:8px">Cities ranked by peak heat-island intensity. Click to zoom.</div><div id="heat-detail"></div>';
  h+=cs.map((c,i)=>`<button class="heatrow" data-i="${i}" style="display:block;width:100%;text-align:left;background:${c.max>6?'#d8694e16':'transparent'};border:1px solid #252b2c;border-radius:8px;padding:8px 10px;margin-bottom:6px;cursor:pointer;color:#ededE6">
@@ -589,7 +669,10 @@ function selectHeatCity(i){const c=APP.heat.cities[i];if(maps.heat)maps.heat.fly
 function show(v){
  document.querySelectorAll('.view').forEach(s=>s.classList.remove('show'));
  document.getElementById('v-'+v).classList.add('show');
- document.querySelectorAll('#nav button').forEach(b=>b.classList.toggle('active',b.dataset.v===v));
+ const risky=(v==='risk'||v==='cities'||v==='corridor');
+ document.querySelectorAll('#nav button').forEach(b=>b.classList.toggle('active',b.dataset.v===v||(risky&&b.dataset.v==='risk')));
+ const sn=document.getElementById('subnav');sn.style.display=risky?'flex':'none';
+ document.querySelectorAll('#subnav button').forEach(b=>b.classList.toggle('active',b.dataset.v===v));
  setTimeout(()=>{
   if(v==='risk'){maps.risk=maps.risk||riskNationalMap('map-risk');maps.risk.invalidateSize();}
   if(v==='cities'){if(!maps.cities){maps.cities=cityMap('map-cities');buildCityPanel();selectCity(0);}maps.cities.invalidateSize();}
@@ -597,9 +680,10 @@ function show(v){
   if(v==='landuse'){if(!maps.landuse){maps.landuse=landuseMap('map-landuse');buildLandusePanel();}maps.landuse.invalidateSize();}
   if(v==='heat'){if(!maps.heat){maps.heat=heatMap('map-heat');buildHeatPanel();selectHeatCity(0);}maps.heat.invalidateSize();}
   if(v==='staufen'){maps.staufen=maps.staufen||surfaceMap('map-staufen',APP.st_surface,APP.staufen,{points:true});maps.staufen.invalidateSize();}
-  if(v==='timelapse'){maps.timelapse=maps.timelapse||timelapseMap('map-timelapse',APP.timelapse);maps.timelapse.invalidateSize();}
+  if(v==='timelapse'){maps.timelapse=maps.timelapse||timelapseMap('map-timelapse');maps.timelapse.invalidateSize();}
  },60);
 }
 document.getElementById('nav').addEventListener('click',e=>{if(e.target.dataset.v)show(e.target.dataset.v);});
+document.getElementById('subnav').addEventListener('click',e=>{if(e.target.dataset.v)show(e.target.dataset.v);});
 document.getElementById('ov-tiles').addEventListener('click',e=>{const t=e.target.closest('[data-go]');if(t)show(t.dataset.go);});
 </script></body></html>"""

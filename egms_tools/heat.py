@@ -142,3 +142,14 @@ def landsat_lst_to_drive(bbox, start, end, scale=100, max_cloud=60,
         image=img, description=filename, folder=folder, fileNamePrefix=filename,
         region=region, scale=scale, maxPixels=1e10)
     return task
+
+
+def grid_from_array(arr, bounds, step=4):
+    """Turn a real LST raster (2-D array, north-up) + bounds [[s,w],[n,e]] into
+    the {bbox,nx,ny,z} grid the app's click-readout samples, so clicking the map
+    returns real °C. Downsample with `step` to keep the payload small."""
+    import numpy as np
+    a = np.asarray(arr, float)[::step, ::step]
+    z = np.where(np.isnan(a), None, np.round(a, 1)).ravel().tolist()
+    (s, w), (n, e) = bounds
+    return {"bbox": [s, w, n, e], "nx": a.shape[1], "ny": a.shape[0], "z": z}

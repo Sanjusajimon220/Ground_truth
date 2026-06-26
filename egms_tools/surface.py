@@ -16,7 +16,7 @@ import io
 import numpy as np
 
 __all__ = ["interpolate_grid", "surface_png", "surface_png_stops",
-           "grid_payload", "RISK_STOPS", "HEAT_STOPS"]
+           "grid_payload", "RISK_STOPS", "HEAT_STOPS", "ANOM_STOPS"]
 
 # velocity (mm/yr) -> RGB control points: red(sub) .. green(stable) .. blue(uplift)
 RISK_STOPS = np.array([
@@ -97,20 +97,38 @@ HEAT_STOPS = np.array([
     [12,  0.62, 0.10, 0.12],
 ])
 
+# Diverging ramp for ANOMALY (vs mean): strong blue below, white at the mean,
+# strong red above — visually distinct from the absolute ramp.
+ANOM_STOPS = np.array([
+    [-12, 0.13, 0.30, 0.66],
+    [-6,  0.36, 0.62, 0.82],
+    [-2,  0.74, 0.86, 0.92],
+    [0,   0.96, 0.96, 0.96],
+    [2,   0.96, 0.78, 0.62],
+    [6,   0.87, 0.42, 0.27],
+    [12,  0.65, 0.09, 0.12],
+])
+
 
 def surface_png_stops(Z, stops, vmin, vmax, alpha=0.7):
-    """Colour a grid with an arbitrary colour ramp (NaN = transparent)."""
+    """Colour a grid with an arbitrary colour ramp (NaN = transparent).
+
+    The data range [vmin, vmax] is mapped onto the ramp's own domain, so the
+    full colour range is used regardless of the data's absolute scale (e.g.
+    absolute LST 10-40 C, or anomaly -12..+12)."""
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
     ny, nx = Z.shape
     rgba = np.zeros((ny, nx, 4), float)
     mask = ~np.isnan(Z)
-    Zc = np.clip(np.nan_to_num(Z), vmin, vmax)
     vs = stops[:, 0]
-    rgba[..., 0] = np.interp(Zc, vs, stops[:, 1])
-    rgba[..., 1] = np.interp(Zc, vs, stops[:, 2])
-    rgba[..., 2] = np.interp(Zc, vs, stops[:, 3])
+    Zc = np.clip(np.nan_to_num(Z), vmin, vmax)
+    t = (Zc - vmin) / (vmax - vmin + 1e-9)                 # 0..1 across the data range
+    Zr = vs.min() + t * (vs.max() - vs.min())              # remap onto the ramp domain
+    rgba[..., 0] = np.interp(Zr, vs, stops[:, 1])
+    rgba[..., 1] = np.interp(Zr, vs, stops[:, 2])
+    rgba[..., 2] = np.interp(Zr, vs, stops[:, 3])
     rgba[..., 3] = np.where(mask, alpha, 0.0)
     buf = io.BytesIO()
     plt.imsave(buf, rgba, format="png")
