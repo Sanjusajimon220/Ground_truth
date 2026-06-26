@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "egms-tools"
-version = "0.1.0"
+version = "0.17.0"
 description = "Make the free European Ground Motion Service usable: turn Copernicus EGMS InSAR into per-asset ground-motion risk."
 readme = "README.md"
 requires-python = ">=3.10"
