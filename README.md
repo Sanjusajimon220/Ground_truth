@@ -1,86 +1,109 @@
-# egms-tools
+# egms-tools — the open core of **GroundTruth**
 
-**Make the free European Ground Motion Service usable — across the whole of Germany.**
+**Multi-hazard ground-and-land risk intelligence for Germany, built entirely from free satellite data.**
 
-Germany is covered, for free, by a millimetre-precision map of how the ground is moving: the Copernicus **European Ground Motion Service (EGMS)**, built from Sentinel-1 InSAR. It's one of the most valuable open geospatial datasets in the country — and almost nobody who needs it can use it, because it ships as enormous tables of persistent-scatterer points that take InSAR expertise to read. `egms-tools` is the bridge: it turns EGMS into **per-asset ground-motion risk** for the people who own things that crack, tilt or sink.
+Germany is covered, for free, by three of the most valuable open Earth-observation datasets in existence — and almost nobody who needs them can use them, because they ship as raw scatterer tables, thermal rasters and multi-band imagery that take remote-sensing expertise to read. `egms-tools` is the bridge: it fuses them into **queryable, map-based risk layers** for the people who own things that crack, tilt, sink, overheat, or change use.
 
-> **This is the main project** — the open core of **GroundTruth**, ground-motion intelligence for infrastructure. Study area: **Germany**. By Sanju Sajimon (M.Sc. Remote Sensing, KIT; ex-surveyor & civil engineer). See [`CONCEPTS.md`](CONCEPTS.md) for *why points / what accuracy / temporal patterns*, [`EXPLAINER.md`](EXPLAINER.md) for "what is EGMS," and [`ARCHITECTURE.md`](ARCHITECTURE.md) for what every file does.
+> **This is the main project** — the open core of **GroundTruth**. Study area: **Germany**. By Sanju Sajimon (M.Sc. Remote Sensing, KIT; ex-surveyor & civil engineer).
 
-## What it does
+---
+
+## Three real hazard layers, one engine
+
+| Layer | Source (free) | Signal | Status |
+|---|---|---|---|
+| **Ground deformation** | Copernicus **EGMS** (Sentinel-1 InSAR, L3 Ortho) | mm/yr vertical velocity + displacement time series | ✅ **Real** — loads real EGMS tiles; per-region now, scaling to national |
+| **Urban heat** | **Landsat** Collection-2 thermal (ST_B10) | land-surface temperature °C + heat-island anomaly | ✅ **Real** — national, **10-year** median + yearly time-lapse (2016–2025) |
+| **Land-use change** | **Sentinel-2** optical | change parcels + compliance flags | ◻️ Pipeline built; classifier in progress |
+
+All three render in **one single-file app** on a real basemap (OpenStreetMap / Sentinel-2 / Esri satellite / terrain), with per-layer on/off toggles, click-to-read values, and a **dual time-lapse** that switches between *ground motion over time* and *urban heat over time*.
 
 ```
-EGMS scatterers (Germany)  ─►  attach to your assets  ─►  robust velocity + acceleration (with CI)
-                                                       ─►  differential motion (distortion proxy)
-                                                       ─►  honest risk (OK/Monitor/Investigate/Act) + report + dashboard
+Free satellite data (Germany)
+   EGMS InSAR  ──►  real vertical velocity surface + displacement time-lapse  (mm/yr)
+   Landsat     ──►  real LST: absolute °C  +  heat-island anomaly  +  10-yr time-lapse
+   Sentinel-2  ──►  land-use change parcels + compliance queue
+        └──────────►  ONE app: toggle layers, click any point, watch a decade evolve
 ```
 
-It surfaces evidence and uncertainty; it does not replace a geotechnical inspection. Risk thresholds are explicit, documented defaults to calibrate per asset class.
+It surfaces evidence and uncertainty; it does not replace a geotechnical inspection or a site survey. Risk thresholds are explicit, documented defaults to calibrate per asset class.
+
+---
+
+## What's real today (honest status)
+
+- **Urban heat — real & national.** 10-year summer-median land-surface temperature across all of Germany from Landsat thermal, clipped to the national outline, with an **Absolute °C / vs-10-yr-mean** toggle and a **2016→2025 yearly time-lapse**. Click anywhere reads the real temperature.
+- **Ground deformation — real, scaling.** Loads real **EGMS L3 Ortho Vertical** tiles (100 × 100 km, EPSG:3035) into a velocity surface + a **2020→2024 displacement time-lapse**. Click reads real **mm/yr**. Currently rendered per downloaded tile (e.g. a single subsidence region); national coverage is a matter of loading the full tile set — same code, more tiles.
+- **Land-use change — pipeline built.** Sentinel-2 composite → rule-based land-cover → change parcels → compliance queue. Real classifier (SegFormer) is a separate track.
+
+The **deformation point cloud is naturally dense on stable targets (cities, infrastructure, bare ground) and absent over forest/water** — that is the physics of InSAR, not missing data, and it is why the layer is valuable: the measurements sit exactly where the assets are.
+
+---
 
 ## Quickstart
 
 ```bash
 pip install -e .
-egms demo --out results          # synthetic, Germany-wide, no data (tiles load in your browser)
-#   -> results/dashboard.html          (national screening, real OSM basemap)
-#      results/dashboard_staufen.html   (building-scale focus on a real map)
-#      results/asset_reports.txt, portfolio_summary.md, results.csv
-#      results/dashboard_timelapse.html    (time-slider: watch the ground move)
-#      results/pattern_*.png             (temporal archetypes: onset / seasonal / accelerating)
-#      results/inspection_queue.csv/.geojson  (ranked work list)
-#      results/coverage_report.md         (incompleteness accounting)
-#      results/movers_since_last_release.md
-#      results/timeseries_*.png
-egms app --out results/app.html  # ONE file, click between every view
-pytest -q                        # 11 tests, CPU-only
+egms app --out results/app.html      # synthetic, Germany-wide demo (real basemap, no data needed)
+egms demo --out results              # full synthetic demo bundle
+pytest -q                            # CPU-only test suite
 ```
 
-The dashboards render on a **real OpenStreetMap basemap** (Leaflet) — your scatterers and building footprints sit at their true coordinates on real streets; click a footprint for its report and displacement history. The national view screens all of Germany; the **Staufen im Breisgau** focus zooms to building scale, where geothermal drilling triggered real ground heave that cracked the historic core (flagged *Act — rising and accelerating*). The map tiles are real OSM; the motion is synthetic for the demo (needs internet to load tiles).
+### Real data — the way GroundTruth actually runs
 
-### Real OSM footprints (any area)
-
+**Urban heat (Landsat, via Google Earth Engine in Colab):**
 ```python
-from egms_tools import fetch_osm_buildings, analyse, load_egms
-assets = fetch_osm_buildings(47.8765, 7.7255, 47.8815, 7.7325)  # bbox: real Staufen footprints
-field  = load_egms("EGMS_tile.csv")
-cfg, results = analyse(field, assets)                            # real buildings + real motion
+from egms_tools.surface import surface_png_stops, HEAT_STOPS, ANOM_STOPS
+from egms_tools.heat import grid_from_array
+from egms_tools import build_app
+# read a 10-yr LST GeoTIFF (exported from Earth Engine), clip to Germany,
+# build absolute + anomaly PNGs + a yearly time-lapse, then:
+build_app("groundtruth_real.html", heat_override={...}, heat_timelapse={...})
 ```
 
-## On real EGMS (Germany)
-
+**Ground deformation (real EGMS L3 tile):**
 ```python
-from egms_tools import load_egms, analyse
-field = load_egms("EGMS_L3_E38N32_100km_U.csv")   # free EGMS tile (vertical product)
-cfg, results = analyse(field, my_assets)           # my_assets: footprints from OSM / cadastre
+from egms_tools.io import load_egms_l3, egms_deformation_override
+from egms_tools import build_app
+
+eg   = load_egms_l3("EGMS_L3_E45N31_100km_U_2020_2024_1.csv")  # free Copernicus tile
+defo = egms_deformation_override(eg)        # auto-fits to the tile; real velocity + time-lapse
+build_app("groundtruth_real.html", deformation_override=defo)
 ```
 
-`load_egms` parses the EGMS CSV shape (one row per scatterer; one displacement column per date `YYYYMMDD`); everything downstream is identical to the demo. EGMS distributes Germany as 100 km × 100 km tiles (EPSG:3035) — download them free (registration) from the Copernicus EGMS portal, and clip to official German boundaries (BKG VG250). For real data: `pip install -e ".[real]"` (pandas + shapely).
+**Both layers in one app:**
+```python
+build_app("groundtruth_real.html",
+          heat_override=heat_override, heat_timelapse=heat_timelapse,
+          deformation_override=defo)
+```
 
-## Purpose of each file (short version — full detail in `ARCHITECTURE.md`)
+`load_egms_l3` parses the real EGMS L3 CSV (easting/northing in EPSG:3035 → lon/lat, `mean_velocity`, dated `YYYYMMDD` columns). EGMS tiles are free (registration) from the Copernicus EGMS portal; Landsat thermal is free via Earth Engine. For real data: `pip install -e ".[real]"` (pandas, shapely, pyproj, rasterio, earthengine-api).
+
+---
+
+## What every module does
 
 | File | Purpose |
 |---|---|
-| `egms_tools/germany.py` | The study area: Germany bbox, real ground-motion regions, the velocity field. |
-| `egms_tools/synthetic.py` | The **only synthetic part** — a Germany-wide demo PS field + monitored assets. |
-| `egms_tools/io.py` | Load **real** EGMS tile CSVs into the same structure; export results. |
-| `egms_tools/osm.py` | Fetch **real** OSM building footprints (Overpass) for any area; GeoJSON cache. |
-| `egms_tools/analysis.py` | The brain: attach · robust velocity (+CI) · acceleration · differential · risk. |
-| `egms_tools/temporal.py` | Temporal patterns: decompose a time series → trend, seasonal, **onset**; classify archetype. |
-| `egms_tools/actionable.py` | Actionable outputs: coverage/incompleteness report, ranked inspection queue (CSV+GeoJSON), movers (what changed). |
-| `egms_tools/landuse.py` | **Land-use change & compliance** (optical hazard layer): change parcels + compliance queue (CSV+GeoJSON). |
-| `egms_tools/heat.py` | **Urban heat** (thermal hazard layer): land-surface-temperature anomaly + per-city heat stats. |
-| `egms_tools/report.py` | Plain-language per-asset reports, portfolio summary, displacement figures. |
-| `egms_tools/dashboard.py` | Interactive risk dashboard on a **real OSM basemap** (Leaflet): footprints + scatterers, click-through reports. National + focus. |
-| `egms_tools/dashboard_temporal.py` | **Time-slider** dashboard — watch cumulative ground motion evolve over time on the real map. |
-| `egms_tools/dashboard_density.py` | **National density map** — aggregate tens of thousands of points into a grid (data-volume + mean-velocity view). |
-| `egms_tools/dashboard_app.py` | **Combined single-file app** — one HTML, nav across every view: risk surface (vertical/horizontal toggle, search, click-to-read), **city planning** (per-city stats), **corridor/path risk**, Staufen, time-lapse, coverage, queue, concepts. Optical basemaps (Sentinel-2 + hi-res satellite). |
-| `egms_tools/cli.py` | `egms demo` (synthetic Germany) and `egms run` (real tiles). |
-| `experiments/demo.py` | The Germany demo as a script. |
-| `tests/test_egms.py` | 5 fast tests (Germany coverage, hotspots, subsidence/heave flagged, export). |
-| `configs/demo.yaml` | Demo + risk parameters in one place. |
+| `germany.py` | Study area: Germany bbox, outline (for clipping), hotspots, cities, velocity field. |
+| `io.py` | **Real EGMS**: `load_egms` (L2), `load_egms_l3` (L3 Ortho, EPSG:3035 reprojection), `egms_deformation_override` (real velocity surface + time-lapse for the app). |
+| `heat.py` | **Real Landsat LST** loaders + `grid_from_array` (real-°C click readout) + per-city heat stats. |
+| `change.py` | **Real Sentinel-2** land-use change pipeline (composite → land-cover → change parcels). |
+| `surface.py` | Interpolation + colour ramps: `RISK_STOPS` (motion), `HEAT_STOPS` (absolute °C), `ANOM_STOPS` (diverging anomaly). |
+| `analysis.py` / `temporal.py` | Robust velocity (+CI), acceleration, differential motion, risk levels, temporal archetypes. |
+| `actionable.py` | Coverage/incompleteness report, ranked inspection queue (CSV + GeoJSON), movers. |
+| `landuse.py` | Change parcels + compliance queue (CSV + GeoJSON). |
+| `osm.py` | Real OSM building footprints (Overpass) for any area. |
+| `report.py` | Plain-language per-asset reports, portfolio summary, displacement figures. |
+| `dashboard_app.py` | **The combined single-file app**: per-layer toggles, basemaps, risk surface (+ City planning / Corridor sub-nav), land-use, urban heat (absolute/anomaly), Staufen, dual time-lapse (motion ⇄ heat), coverage, queue, concepts. |
+| `cli.py` | `egms app` / `egms demo`. |
+
+---
 
 ## Honest scope
 
-The demo runs on **clearly-labelled synthetic data** so the whole pipeline works offline with known ground truth — it validates the method, not a real site, and the regional velocities are illustrative. Point it at real EGMS tiles for real measurements; only `germany.py` and `synthetic.py` are synthetic — `analysis`, `report`, `dashboard` and `io` are the real product.
+The offline demo runs on **clearly-labelled synthetic data** so the whole pipeline works with known ground truth. The **real product** is the loaders + renderers fed with real data: **urban heat is real and national over 10 years today; ground deformation is real per EGMS tile and scales to national with the full tile set; land-use change is a built pipeline pending its classifier.** Only `synthetic.py` (and the illustrative regions in `germany.py`) are synthetic — `io`, `heat`, `change`, `analysis`, `surface` and `dashboard_app` are the real engine.
 
 ## License
 Apache-2.0 © 2026 Sanju Sajimon
